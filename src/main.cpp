@@ -1,6 +1,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <vector>
 #include <utility>
 
@@ -77,15 +78,16 @@ namespace compute {
         return (fwht.size() - *max_element(fwht.begin(), fwht.end(), abs_compare)) / 2;
     }
 
-    int correlation_immunity(vector<int> &fwht) {
+    int correlation_immunity(vector<int> &fwht, int cap) {
         // Evaluate correlation
-        vector<bool> correlation(10, true);
+        vector<bool> correlation(cap, true);
         for (int i = 1; i < fwht.size(); i++) {
             // Count number of 1 bits
             int c = i - ((i >> 1) & 0x55555555);
             c = (c & 0x33333333) + ((c >> 2) & 0x33333333);
             c = ((c + (c >> 4) & 0xF0F0F0F) * 0x1010101) >> 24;
-            correlation[c - 1] = fwht[i] == 0;
+            if (correlation[c - 1])
+                correlation[c - 1] = fwht[i] == 0;
         }
 
         // Find correlation immunity
@@ -104,16 +106,52 @@ namespace compute {
 namespace fitness {
     double f1(const cartgp::Genotype &gt, const vector<cartgp::Function<bool>> &funcs) {
         vector<int> fwht = compute::FWHT(gt, funcs);
-        bool balanced = compute::balance(fwht);
-        int nf = compute::non_linearity(fwht);
-        int ci = compute::correlation_immunity(fwht);
-        
-        return balanced ? ci * nf : ci * nf / 2;
+        int score = compute::non_linearity(fwht);
+        score = compute::balance(fwht) ? score * 4 : score;
+        score = compute::correlation_immunity(fwht, gt.num_inputs()) ? score * 2 : score;
+        return score;
+    }
+}
+
+string results2csv(cartgp::Genotype &gt, cartgp::SolutionInfo &si,
+                   vector<cartgp::Function<bool>> &funcs) {
+    vector<int> fwht = compute::FWHT(gt, funcs);
+    return to_string(si.steps) + "," + to_string(si.fitness) + ","
+           + to_string(compute::balance(fwht)) + "," + to_string(compute::non_linearity(fwht))
+           + "," + to_string(compute::correlation_immunity(fwht, gt.num_inputs()));
+}
+
+void save_table(cartgp::Genotype &gt, vector<cartgp::Function<bool>> &funcs, string fname) {
+    // Count powers
+    vector<size_t> powers = {1};
+    for (int i = 0; i < gt.num_inputs(); i++)
+        powers.push_back(powers[i] * 2);
+
+    // Open file and write values
+    ofstream file(fname, ios::binary);
+    char eight_bits = 0;
+    vector<bool> inputs(gt.num_inputs(), false);
+    eight_bits += gt.evaluate(funcs, inputs)[0] ? 1 : 0;
+    for (int i = 1; i < powers[gt.num_inputs()]; i++) {
+        for (int j = 0; j < gt.num_inputs(); j++) {
+            if (i % powers[j] == 0)
+                inputs[j] = ! inputs[j];
+        }
+        eight_bits <<= 1;
+        eight_bits += gt.evaluate(funcs, inputs)[0] ? 1 : 0;
+        if ((i + 1) % 8 == 0)
+            file.write(&eight_bits, sizeof(eight_bits));
     }
 }
 
 int main(int argc, char **argv) {
-    // Set parameters
+    // Check args
+    if (argc != 2) {
+        cerr << "usage: ./evobool <fitness_function>" << endl;
+        return 1;
+    }
+
+    // Set static parameters
     cartgp::GeneInt rows = 1; // Generally considered as best practice
     cartgp::GeneInt cols = 1500; // Best results according to paper
     cartgp::GeneInt ins = 10; // Given in assignment
@@ -127,7 +165,25 @@ int main(int argc, char **argv) {
     double margin = 1; // Small enough difference between fitness to call evolution stable
     size_t epochs = 500000; // As in paper
 
-    // Construct genotype and evolve it
-    cartgp::Genotype gt(arity, funcs.size(), lback, ins, outs, rows, cols);
-    auto results = gt.evolve(funcs, population - 1, margin, epochs, {fitness::f1});
+    // Set fitness function
+    cartgp::FitnessFunction<bool> ff;
+    if (string(argv[1]) == string("1"))
+        ff = {fitness::f1};
+    else {
+        cerr << "ERROR: Invalid fitness function." << endl;
+        return 1;
+    }
+
+    // Prepare csv
+    ofstream csv("output/results.csv");
+    csv << "Run,Epochs,Fitness,Balanced,Non-linearity,Correlation immunity" << endl;
+
+    // Running evolution 100 times
+    for (int i = 0; i < 100; i++) {
+        // Construct genotype and evolve it
+        cartgp::Genotype gt(arity, funcs.size(), lback, ins, outs, rows, cols);
+        auto [evolved, solution] = gt.evolve(funcs, population - 1, margin, epochs, ff);
+        csv << to_string(i) + "," + results2csv(evolved, solution, funcs) << endl;
+        save_table(evolved, funcs, "output/table" + to_string(i));
+    }
 }
