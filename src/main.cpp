@@ -4,8 +4,14 @@
 #include <fstream>
 #include <vector>
 #include <utility>
+#include <chrono>
+#include <thread>
 
 #include "cartgp/genotype.h"
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 using namespace std;
 
@@ -104,21 +110,20 @@ namespace compute {
 }
 
 namespace fitness {
-    double f1(const cartgp::Genotype &gt, const vector<cartgp::Function<bool>> &funcs) {
+    tuple<double, bool, int, int> f1(
+            const cartgp::Genotype &gt, const vector<cartgp::Function<bool>> &funcs) {
         vector<int> fwht = compute::FWHT(gt, funcs);
-        int score = compute::non_linearity(fwht);
-        score = compute::balance(fwht) ? score * 4 : score;
-        score = compute::correlation_immunity(fwht, gt.num_inputs()) ? score * 2 : score;
-        return score;
+        bool b = compute::balance(fwht);
+        int nf = compute::non_linearity(fwht);
+        int ci = compute::correlation_immunity(fwht, gt.num_inputs());
+        int score = b ? nf * 4 : nf;
+        return {ci ? score * 2 : score, b, nf, ci};
     }
 }
 
-string results2csv(cartgp::Genotype &gt, cartgp::SolutionInfo &si,
-                   vector<cartgp::Function<bool>> &funcs) {
-    vector<int> fwht = compute::FWHT(gt, funcs);
-    return to_string(si.steps) + "," + to_string(si.fitness) + ","
-           + to_string(compute::balance(fwht)) + "," + to_string(compute::non_linearity(fwht))
-           + "," + to_string(compute::correlation_immunity(fwht, gt.num_inputs()));
+string epoch2csv(tuple<double, bool, int, int> e) {
+    return to_string(get<0>(e)) + "," + to_string(get<1>(e)) + "," + to_string(get<2>(e)) + ","
+           + to_string(get<3>(e));
 }
 
 void save_table(cartgp::Genotype &gt, vector<cartgp::Function<bool>> &funcs, string fname) {
@@ -146,8 +151,8 @@ void save_table(cartgp::Genotype &gt, vector<cartgp::Function<bool>> &funcs, str
 
 int main(int argc, char **argv) {
     // Check args
-    if (argc != 2) {
-        cerr << "usage: ./evobool <fitness_function>" << endl;
+    if ((argc != 2) && (argc != 3)) {
+        cerr << "usage: ./evobool <fitness_func> [<num_threads>]" << endl;
         return 1;
     }
 
@@ -162,7 +167,6 @@ int main(int argc, char **argv) {
                                             {"and", node::AND}, {"xnor", node::XNOR},
                                             {"iand", node::IAND}}; // As in paper
     size_t population = 5; // Size of offspring is therefore 4 - as in paper
-    double margin = 1; // Small enough difference between fitness to call evolution stable
     size_t epochs = 500000; // As in paper
 
     // Set fitness function
@@ -174,16 +178,30 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Prepare csv
-    ofstream csv("output/results.csv");
-    csv << "Run,Epochs,Fitness,Balanced,Non-linearity,Correlation immunity" << endl;
+    // Set number of threads (if OpenMP is used)
+#ifdef _OPENMP
+    if (argc == 3)
+        omp_set_num_threads(atoi(argv[2]));
+    else
+        omp_set_num_threads(1);
+#endif
 
     // Running evolution 100 times
+#pragma omp parallel for
     for (int i = 0; i < 100; i++) {
+        // Sleep a bit just in case random number generator is based on time
+        this_thread::sleep_for(chrono::milliseconds(i));
+
         // Construct genotype and evolve it
         cartgp::Genotype gt(arity, funcs.size(), lback, ins, outs, rows, cols);
-        auto [evolved, solution] = gt.evolve(funcs, population - 1, margin, epochs, ff);
-        csv << to_string(i) + "," + results2csv(evolved, solution, funcs) << endl;
+        vector<tuple<double, bool, int, int>> ed;
+        auto [evolved, solution] = gt.evolve(funcs, population - 1, epochs, ff, ed);
+
+        // Store results
+        ofstream csv("output/result" + to_string(i) + ".csv");
+        csv << "Epoch,Fitness,Balanced,Non-linearity,Correlation immunity" << endl;
+        for (int j = 0; j < ed.size(); j++)
+            csv << to_string(j) + "," + epoch2csv(ed[j]) << endl;
         save_table(evolved, funcs, "output/table" + to_string(i));
     }
 }

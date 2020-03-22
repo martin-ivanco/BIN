@@ -6,6 +6,7 @@
 #include <cmath>
 #include <functional>
 #include <iostream>
+#include <fstream>
 #include <map>
 #include <random>
 #include <sstream>
@@ -206,7 +207,7 @@ struct Function {
 class Genotype;
 
 template <typename T>
-using FitnessFunction = std::function<double(
+using FitnessFunction = std::function<std::tuple<double, bool, int, int>(
     const Genotype &genotype, const std::vector<Function<T>> &functions)>;
 template <typename T, std::size_t kBehavioralComponents>
 using BehavioralFunction =
@@ -511,58 +512,45 @@ public:
      *   at each node
      * @param num_offsprings How many mutated offsprings should be created
      *   (the total size of the population will be num_offsprings + 1)
-     * @param stable_margin difference in fitness between generations that is
-     *  low enough to call the generation "stable" (close to the final solution)
-     * @param steps_to_stabilize How many stable generations (with differences
-     *   in fitness < stable_margin) we need to go through before we stop
-     *   the evolution.
+     * @param stable_epochs How many epochs of evolution should be carried out
      * @param fitness_function Fitness function used for choosing the best
      *   individual within the population. The larger it is, the "better" the
      *   individual is.
+     * @param evolution_data Vector for storing evolution data
      * @return
      */
     template <typename T>
     std::pair<Genotype, SolutionInfo>
     evolve(const std::vector<Function<T>> &functions,
            const std::size_t num_offsprings,
-           const double stable_margin,
-           const std::size_t steps_to_stabilize,
-           FitnessFunction<T> fitness_function) {
+           const std::size_t num_epochs,
+           FitnessFunction<T> fitness_function,
+           std::vector<std::tuple<double, bool, int, int>> &evolution_data) {
 
         Genotype promoted(*this);
-        double previous_fitness = fitness_function(promoted, functions);
-        std::size_t steps_without_changes = 0;
-        std::size_t total_steps = 0;
-        bool first_run = true;
+        std::tuple<double, bool, int, int> pf = fitness_function(promoted, functions);
 
-        do {
+        for (std::size_t i = 0; i < num_epochs; i++) {
             Genotype best(promoted);
-            double max_fitness = previous_fitness;
+            std::tuple<double, bool, int, int> mf = pf;
 
-            for (std::size_t child_id = 0;
-                    child_id < num_offsprings; ++child_id) {
-                Genotype child =
-                    first_run ? Genotype::random_like(promoted) : promoted.mutate();
-                double child_fitness = fitness_function(child, functions);
-                if (child_fitness >= max_fitness || std::isnan(max_fitness)) {
-                    max_fitness = child_fitness;
+            for (std::size_t child_id = 0; child_id < num_offsprings; ++child_id) {
+                Genotype child = i == 0 ? Genotype::random_like(promoted) : promoted.mutate();
+                std::tuple<double, bool, int, int> cf = fitness_function(child, functions);
+                if (std::get<0>(cf) >= std::get<0>(mf)
+                        || std::isnan(std::get<0>(mf))) {
+                    mf = cf;
                     best = std::move(child);
                 }
             }
-            double fitness_difference = std::abs(max_fitness - previous_fitness);
-            if (fitness_difference < stable_margin) {
-                ++steps_without_changes;
-            } else {
-                steps_without_changes = 0;
-            }
-            previous_fitness = max_fitness;
+
+            pf = mf;
+            evolution_data.push_back(mf);
             promoted = std::move(best);
-            first_run = false;
-            total_steps += 1;
-        } while (steps_without_changes < steps_to_stabilize);
+        }
+
         return std::pair<Genotype, SolutionInfo>(
-            promoted,
-            {total_steps, previous_fitness});
+            promoted, {num_epochs, std::get<0>(pf)});
     }
 
     /**
