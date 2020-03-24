@@ -53,7 +53,7 @@ namespace compute {
                 if (i % powers[j] == 0)
                     inputs[j] = ! inputs[j];
             }
-            result.push_back(gt.evaluate(funcs, inputs)[0]);
+            result.push_back(gt.evaluate(funcs, inputs)[0] ? 1 : -1);
         }
 
         // Compute Fast Walsh-Hadamard Transform
@@ -77,11 +77,11 @@ namespace compute {
     }
 
     bool balance(vector<int> &fwht) {
-        return fwht[0] * 2 == fwht.size();
+        return fwht[0] == 0;
     }
 
     int non_linearity(vector<int> &fwht) {
-        return (fwht.size() - *max_element(fwht.begin(), fwht.end(), abs_compare)) / 2;
+        return (fwht.size() - abs(*max_element(fwht.begin(), fwht.end(), abs_compare))) / 2;
     }
 
     int correlation_immunity(vector<int> &fwht, int cap) {
@@ -110,14 +110,45 @@ namespace compute {
 }
 
 namespace fitness {
+    // All scores are based on non-linearity - that is the main objective
+    // Balancedness and correlation immunity pose as rewards or penalties
+
     tuple<double, bool, int, int> f1(
             const cartgp::Genotype &gt, const vector<cartgp::Function<bool>> &funcs) {
         vector<int> fwht = compute::FWHT(gt, funcs);
         bool b = compute::balance(fwht);
         int nf = compute::non_linearity(fwht);
         int ci = compute::correlation_immunity(fwht, gt.num_inputs());
-        int score = b ? nf * 4 : nf;
-        return {ci ? score * 2 : score, b, nf, ci};
+        // If the function is balanced, score gets doubled
+        double score = b ? nf * 2 : nf;
+        // If the function has correlation immunity of at least 1, score gets doubled
+        score = ci > 0 ? score * 2 : score;
+        return {score, b, nf, ci};
+    }
+
+    tuple<double, bool, int, int> f2(
+            const cartgp::Genotype &gt, const vector<cartgp::Function<bool>> &funcs) {
+        vector<int> fwht = compute::FWHT(gt, funcs);
+        bool b = compute::balance(fwht);
+        int nf = compute::non_linearity(fwht);
+        int ci = compute::correlation_immunity(fwht, gt.num_inputs());
+        // If the function is balanced and has correlation immunity equal to 1
+        // the score is quadrupled - strong emphasis on not having higher CI
+        double score = nf;
+        if (b && (ci == 1))
+            score *= 4;
+        return {score, b, nf, ci};
+    }
+
+    tuple<double, bool, int, int> f3(
+            const cartgp::Genotype &gt, const vector<cartgp::Function<bool>> &funcs) {
+        vector<int> fwht = compute::FWHT(gt, funcs);
+        bool b = compute::balance(fwht);
+        int nf = compute::non_linearity(fwht);
+        int ci = compute::correlation_immunity(fwht, gt.num_inputs());
+        // If the function is balanced, the score is multiplied by 1 + 1/5 CI
+        double score = b ? (1 + static_cast<double>(ci) / 5) * nf : nf;
+        return {score, b, nf, ci};
     }
 }
 
@@ -173,6 +204,10 @@ int main(int argc, char **argv) {
     cartgp::FitnessFunction<bool> ff;
     if (string(argv[1]) == string("1"))
         ff = {fitness::f1};
+    else if (string(argv[1]) == string("2"))
+        ff = {fitness::f2};
+    else if (string(argv[1]) == string("3"))
+        ff = {fitness::f3};
     else {
         cerr << "ERROR: Invalid fitness function." << endl;
         return 1;
