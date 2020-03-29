@@ -47,7 +47,7 @@ namespace compute {
 
         // Compute truth table
         vector<bool> inputs(gt.num_inputs(), false);
-        result.push_back(gt.evaluate(funcs, inputs)[0]);
+        result.push_back(gt.evaluate(funcs, inputs)[0] ? 1 : -1);
         for (int i = 1; i < powers[gt.num_inputs()]; i++) {
             for (int j = 0; j < gt.num_inputs(); j++) {
                 if (i % powers[j] == 0)
