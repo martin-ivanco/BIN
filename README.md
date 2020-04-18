@@ -1,5 +1,5 @@
 # Evolution of Robust Boolean Operations
-Project made as a part of the course Bio-Inspired Computers at Brno University of Technology. The task was to implement a program for evolving boolean functions and then design 3 fitness functions to find resilient boolean functions with high non-linearity. This program is uses the [cartgp](https://github.com/kpot/cartgp) library.
+Project made as a part of the course Bio-Inspired Computers at Brno University of Technology. The task was to implement a program for evolving boolean functions and then design 3 fitness functions to find resilient boolean functions with high non-linearity. This program uses the [cartgp](https://github.com/kpot/cartgp) library.
 
 ## How to use
 1. Clone this repo using `git clone https://github.com/photohunter9/BIN.git`
